@@ -12,10 +12,12 @@ import { Button } from "@/components/ui/button";
 import { PlayerAvatar } from "@/features/player-explorer";
 import { ImportTeamCard, useManagerStore } from "@/features/manager";
 import { RivalCompareButton } from "@/features/compare";
+import { DifferentialsCard } from "@/features/differentials";
 import { LiveScoreCard } from "@/features/live";
 import { ShareTeamButton, type CompareSummary } from "@/features/share";
 import { CaptainCompare } from "./CaptainCompare";
 import { DeadlineCountdown } from "./DeadlineCountdown";
+import { RateMyTeamCard } from "./RateMyTeamCard";
 import { useSquadStore } from "@/features/squad-builder";
 import { ROUTES } from "@/routes/paths";
 import { INSIGHT_EMOJI } from "../insights";
@@ -155,6 +157,9 @@ export function ScoutReport() {
         </div>
       </div>
 
+      {/* Team rating (own team) */}
+      {report.rating && <RateMyTeamCard rating={report.rating} />}
+
       {/* Captain options */}
       <CaptainCompare options={report.captainOptions} />
 
@@ -227,6 +232,9 @@ export function ScoutReport() {
           </div>
         )}
       </SectionCard>
+
+      {/* You vs the template */}
+      <DifferentialsCard />
 
       {/* Actions */}
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
