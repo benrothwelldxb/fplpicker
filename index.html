@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en" class="antialiased">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/pwa-icon.svg" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta
+      name="theme-color"
+      content="#ffffff"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#0f172a"
+      media="(prefers-color-scheme: dark)"
+    />
+    <meta
+      name="description"
+      content="Statistical projections, squad optimisation, and transfer planning for Fantasy Premier League."
+    />
+    <title>FPL App — Fantasy Premier League Companion</title>
+    <script>
+      // Apply the persisted theme before first paint to avoid a flash of the
+      // wrong color scheme (FOUC). Mirrors the logic in src/utils/theme.ts.
+      (function () {
+        try {
+          var storageKey = "fpl-app-storage";
+          var stored = localStorage.getItem(storageKey);
+          var theme = "system";
+          if (stored) {
+            var parsed = JSON.parse(stored);
+            theme = (parsed && parsed.state && parsed.state.theme) || "system";
+          }
+          var isDark =
+            theme === "dark" ||
+            (theme === "system" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.classList.toggle("dark", isDark);
+          document.documentElement.style.colorScheme = isDark ? "dark" : "light";
+        } catch (_) {
+          /* no-op: fall back to default light theme */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
