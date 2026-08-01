@@ -6,7 +6,8 @@ import {
   ThemeToggle,
 } from "@/components/common";
 import { Button } from "@/components/ui/button";
-import { InstallButton } from "@/features/pwa";
+import { DeadlineReminderToggle, InstallButton } from "@/features/pwa";
+import { ImportTeamCard } from "@/features/manager";
 import { usePreferenceStore } from "@/features/preferences";
 
 /**
@@ -22,6 +23,13 @@ export function SettingsPage() {
     <PageContainer size="narrow">
       <PageHeader title="Settings" description="Configure your preferences." />
       <div className="space-y-4">
+        <SectionCard
+          title="Your FPL team"
+          description="Connect your real team by Manager ID — everything then reflects your actual squad."
+        >
+          <ImportTeamCard />
+        </SectionCard>
+
         <SectionCard
           title="Appearance"
           description="Choose light, dark, or match your system."
@@ -44,6 +52,13 @@ export function SettingsPage() {
             <RotateCcw className="h-4 w-4" />
             Replay setup guide
           </Button>
+        </SectionCard>
+
+        <SectionCard
+          title="Deadline reminder"
+          description="Get a nudge before each gameweek locks."
+        >
+          <DeadlineReminderToggle />
         </SectionCard>
 
         <SectionCard

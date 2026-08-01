@@ -8,6 +8,7 @@ import { useOptimiser } from "@/features/optimiser";
 import type { OptiPlayer } from "@/features/optimiser";
 import { autoPickLineup, projectLineup } from "@/features/lineup";
 import { bestSingle, useTransferSettings } from "@/features/transfers";
+import { useManagerStore } from "@/features/manager";
 import type { TeamCardData, TeamCardPlayer } from "@/features/share";
 import { generateInsights, type Insight } from "./insights";
 import {
@@ -26,6 +27,18 @@ function greetingFor(hour: number): string {
   return "Good evening";
 }
 
+/** One captaincy option for the comparison strip. */
+export interface CaptainOption {
+  id: number;
+  name: string;
+  photoUrl: string;
+  /** Projected points this week (before doubling). */
+  points: number;
+  /** One-line rationale (double gameweek, or the fixture). */
+  reason: string;
+  isCaptain: boolean;
+}
+
 export interface ScoutReport {
   isLoading: boolean;
   hasTeam: boolean;
@@ -35,6 +48,8 @@ export interface ScoutReport {
   gameweek: number | null;
   projectedPoints: number;
   captain: Player | null;
+  /** Top captaincy options this week (best first). */
+  captainOptions: CaptainOption[];
   /** The starting XI. */
   starters: Player[];
   captainId: number | null;
@@ -63,6 +78,7 @@ export function useScoutReport(): ScoutReport {
   const bootstrap = useBootstrap();
   const { analysis } = useFixtureAnalysis();
   const { calendar } = useGameweekCalendar();
+  const managerName = useManagerStore((s) => s.managerName);
   const squad = useSquad();
   // Only optimise when the user has NO saved squad — otherwise the home screen
   // pays the optimiser's synchronous cost on every visit for a result it discards.
@@ -71,7 +87,9 @@ export function useScoutReport(): ScoutReport {
   const freeTransfers = useTransferSettings((s) => s.freeTransfers);
 
   return useMemo<ScoutReport>(() => {
-    const greeting = greetingFor(new Date().getHours());
+    const firstName = managerName?.trim().split(/\s+/)[0] ?? "";
+    const greeting =
+      greetingFor(new Date().getHours()) + (firstName ? `, ${firstName}` : "");
     const gameweek =
       bootstrap.data?.nextEventId ?? bootstrap.data?.currentEventId ?? null;
 
@@ -102,6 +120,7 @@ export function useScoutReport(): ScoutReport {
       gameweek,
       projectedPoints: 0,
       captain: null,
+      captainOptions: [],
       starters: [],
       captainId: null,
       squadValue: 0,
@@ -201,6 +220,30 @@ export function useScoutReport(): ScoutReport {
       source,
     });
 
+    // Top-3 captaincy options with a one-line reason each.
+    const captainOptions: CaptainOption[] = [...starters]
+      .map((p) => ({ player: p, points: valueOf(p) }))
+      .sort((a, b) => b.points - a.points)
+      .slice(0, 3)
+      .map(({ player, points }) => {
+        const isDouble =
+          (byId.get(player.id)?.windows[WINDOW].fixtureCount ?? 0) >= 2;
+        const next = analysis.get(player.teamId)?.next;
+        const reason = isDouble
+          ? "Plays twice this week"
+          : next
+            ? `vs ${next.opponentShort} (${next.isHome ? "H" : "A"})`
+            : "";
+        return {
+          id: player.id,
+          name: player.webName,
+          photoUrl: player.photoUrl,
+          points,
+          reason,
+          isCaptain: player.id === lineup.captainId,
+        };
+      });
+
     // Shareable team card.
     const toCardPlayer = (p: Player): TeamCardPlayer => ({
       name: p.webName,
@@ -234,6 +277,7 @@ export function useScoutReport(): ScoutReport {
       gameweek,
       projectedPoints,
       captain,
+      captainOptions,
       starters,
       captainId: lineup.captainId,
       squadValue: squadValueTenths / 10,
@@ -256,5 +300,6 @@ export function useScoutReport(): ScoutReport {
     optimiser.result,
     freeTransfers,
     isLoading,
+    managerName,
   ]);
 }

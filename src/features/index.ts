@@ -20,7 +20,9 @@
  * - `transfers` — best single/double/wildcard recommendations with hits and
  *   reasoning. Advisory only.
  */
+export * as compare from "./compare";
 export * as dashboard from "./dashboard";
+export * as manager from "./manager";
 export * as pwa from "./pwa";
 export * as share from "./share";
 export * as fpl from "./fpl";

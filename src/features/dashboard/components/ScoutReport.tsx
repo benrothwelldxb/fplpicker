@@ -10,7 +10,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PlayerAvatar } from "@/features/player-explorer";
-import { ShareTeamButton } from "@/features/share";
+import { ImportTeamCard, useManagerStore } from "@/features/manager";
+import { RivalCompareButton } from "@/features/compare";
+import { ShareTeamButton, type CompareSummary } from "@/features/share";
+import { CaptainCompare } from "./CaptainCompare";
+import { DeadlineCountdown } from "./DeadlineCountdown";
 import { useSquadStore } from "@/features/squad-builder";
 import { ROUTES } from "@/routes/paths";
 import { INSIGHT_EMOJI } from "../insights";
@@ -24,7 +28,21 @@ import { useScoutReport } from "../useScoutReport";
 export function ScoutReport() {
   const report = useScoutReport();
   const setPlayers = useSquadStore((s) => s.setPlayers);
+  const managerName = useManagerStore((s) => s.managerName);
+  const teamName = useManagerStore((s) => s.teamName);
   const navigate = useNavigate();
+
+  // The user's team as a compare summary (for head-to-head).
+  const mine: CompareSummary | null = report.card
+    ? {
+        managerName: managerName ?? "You",
+        teamName: teamName ?? "Your team",
+        projectedPoints: report.card.projectedPoints,
+        captainName: report.card.captainName,
+        formation: report.card.formation,
+        squadValue: report.card.squadValue,
+      }
+    : null;
 
   const useThisTeam = () => {
     setPlayers(report.teamIds);
@@ -48,14 +66,17 @@ export function ScoutReport() {
       <PageContainer>
         <EmptyState
           icon={Sparkles}
-          title="Let's build your team"
-          description="We'll create a full squad for you in seconds."
+          title="Let's get your team in"
+          description="Connect your real FPL team, or let us build one for you in seconds."
           action={
             <Button asChild>
               <Link to={ROUTES.optimiser}>Pick my team</Link>
             </Button>
           }
         />
+        <SectionCard title="Already play FPL?" className="mt-4">
+          <ImportTeamCard />
+        </SectionCard>
       </PageContainer>
     );
   }
@@ -64,9 +85,12 @@ export function ScoutReport() {
     <PageContainer>
       {/* Greeting */}
       <div className="mb-5">
-        <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-          {report.greeting}
-        </h1>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+            {report.greeting}
+          </h1>
+          <DeadlineCountdown />
+        </div>
         <p className="text-sm text-muted-foreground">
           {report.gameweek !== null
             ? `Gameweek ${report.gameweek} · your scout report`
@@ -123,6 +147,9 @@ export function ScoutReport() {
           </div>
         </div>
       </div>
+
+      {/* Captain options */}
+      <CaptainCompare options={report.captainOptions} />
 
       {/* Insights */}
       {report.insights.length > 0 && (
@@ -221,13 +248,21 @@ export function ScoutReport() {
         )}
       </div>
 
-      {/* Share */}
-      <ShareTeamButton
-        data={report.card}
-        size="lg"
-        className="mt-2 w-full"
-        label="Share my team card"
-      />
+      {/* Share & compare */}
+      <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+        <ShareTeamButton
+          data={report.card}
+          size="lg"
+          className="flex-1"
+          label="Share my team card"
+        />
+        <RivalCompareButton
+          mine={mine}
+          gameweek={report.gameweek}
+          size="lg"
+          className="flex-1"
+        />
+      </div>
 
       {report.source === "suggested" && (
         <Badge variant="secondary" className="mt-3">
