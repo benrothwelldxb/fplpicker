@@ -1,0 +1,250 @@
+import { Request, Response, NextFunction } from 'express'
+import { verifyAccessToken, verifyProviderAccessToken } from '../services/jwt.js'
+import prisma from '../services/prisma.js'
+
+// Extend Express Request to include user
+declare global {
+  namespace Express {
+    interface User {
+      id: string
+      email: string
+      name: string
+      role: 'PARENT' | 'STAFF' | 'ADMIN' | 'SUPER_ADMIN'
+      schoolId: string
+      preferredLanguage: string
+    }
+    interface Request {
+      // Set by requireProvider for external provider-portal requests. Distinct
+      // from `user` (staff/parent) so the two principal types never mix.
+      providerUser?: {
+        id: string
+        providerId: string
+      }
+    }
+  }
+}
+
+// Full user type with relations – used by routes that call loadUserWithRelations()
+export interface UserWithRelations extends Express.User {
+  children?: Array<{
+    id: string
+    name: string
+    classId: string
+    class: {
+      id: string
+      name: string
+    }
+  }>
+  studentLinks?: Array<{
+    studentId: string
+    student: {
+      id: string
+      firstName: string
+      lastName: string
+      classId: string
+      class: {
+        id: string
+        name: string
+      }
+    }
+  }>
+  assignedClasses?: Array<{
+    classId: string
+    class: {
+      id: string
+      name: string
+    }
+  }>
+}
+
+/**
+ * Load full user with children, studentLinks, and assignedClasses.
+ * Call this in route handlers that need the related data instead of
+ * relying on the auth middleware to eager-load everything.
+ */
+export async function loadUserWithRelations(userId: string): Promise<UserWithRelations | null> {
+  return prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      children: { include: { class: true } },
+      studentLinks: { include: { student: { include: { class: true } } } },
+      assignedClasses: { include: { class: true } },
+    },
+  }) as Promise<UserWithRelations | null>
+}
+
+export async function isAuthenticated(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+
+  try {
+    const token = authHeader.slice(7)
+    const payload = verifyAccessToken(token)
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        schoolId: true,
+        preferredLanguage: true,
+      },
+    })
+
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' })
+    }
+
+    req.user = user as Express.User
+    // Enrich the per-request logger so every subsequent log line carries
+    // schoolId/userId/role — invaluable when debugging a specific parent's
+    // complaint from prod logs.
+    const reqAny = req as Request & { log?: { child: (bindings: Record<string, unknown>) => unknown } }
+    if (reqAny.log?.child) {
+      reqAny.log = reqAny.log.child({
+        userId: user.id,
+        schoolId: user.schoolId,
+        role: user.role,
+      }) as typeof reqAny.log
+    }
+    next()
+  } catch {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+}
+
+// Helper: ensure JWT is parsed before role checks
+function ensureAuthenticated(req: Request, res: Response, next: NextFunction) {
+  if (req.user) return next()
+  isAuthenticated(req, res, next)
+}
+
+// Staff or higher (STAFF, ADMIN, SUPER_ADMIN)
+export function isStaff(req: Request, res: Response, next: NextFunction) {
+  ensureAuthenticated(req, res, () => {
+    if (req.user && ['STAFF', 'ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+      return next()
+    }
+    res.status(403).json({ error: 'Forbidden - Staff access required' })
+  })
+}
+
+// Admin or higher (ADMIN, SUPER_ADMIN)
+export function isAdmin(req: Request, res: Response, next: NextFunction) {
+  ensureAuthenticated(req, res, () => {
+    if (req.user && (req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN')) {
+      return next()
+    }
+    res.status(403).json({ error: 'Forbidden - Admin access required' })
+  })
+}
+
+export function isSuperAdmin(req: Request, res: Response, next: NextFunction) {
+  ensureAuthenticated(req, res, () => {
+    if (req.user && req.user.role === 'SUPER_ADMIN') {
+      return next()
+    }
+    res.status(403).json({ error: 'Forbidden - Super Admin access required' })
+  })
+}
+
+/**
+ * Authenticate an external provider-portal request. Verifies a provider-kind
+ * JWT (verifyProviderAccessToken rejects staff/parent tokens), confirms the
+ * ProviderUser and its Provider are still active, and attaches req.providerUser.
+ * Every provider route MUST scope its queries by req.providerUser.providerId.
+ */
+export async function requireProvider(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+
+  try {
+    const payload = verifyProviderAccessToken(authHeader.slice(7))
+
+    const providerUser = await prisma.providerUser.findUnique({
+      where: { id: payload.providerUserId },
+      select: { id: true, providerId: true, provider: { select: { status: true } } },
+    })
+
+    if (!providerUser || providerUser.providerId !== payload.providerId) {
+      return res.status(401).json({ error: 'Unauthorized' })
+    }
+    if (providerUser.provider.status !== 'ACTIVE') {
+      return res.status(403).json({ error: 'Provider account is suspended' })
+    }
+
+    req.providerUser = { id: providerUser.id, providerId: providerUser.providerId }
+
+    const reqAny = req as Request & { log?: { child: (bindings: Record<string, unknown>) => unknown } }
+    if (reqAny.log?.child) {
+      reqAny.log = reqAny.log.child({
+        providerUserId: providerUser.id,
+        providerId: providerUser.providerId,
+      }) as typeof reqAny.log
+    }
+    next()
+  } catch {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+}
+
+// Check if user can send to a specific class or whole school
+export async function canSendToTarget(req: Request, res: Response, next: NextFunction) {
+  const user = req.user
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+
+  const { targetClass, classId } = req.body
+
+  if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+    return next()
+  }
+
+  if (user.role === 'STAFF') {
+    if (targetClass === 'Whole School') {
+      return res.status(403).json({ error: 'Only admins can send whole-school messages' })
+    }
+
+    if (classId) {
+      const assignedClasses = await prisma.staffClassAssignment.findMany({
+        where: { userId: user.id },
+        select: { classId: true },
+      })
+      const assignedClassIds = assignedClasses.map(ac => ac.classId)
+      if (!assignedClassIds.includes(classId)) {
+        return res.status(403).json({ error: 'You can only send messages to your assigned classes' })
+      }
+    }
+
+    return next()
+  }
+
+  return res.status(403).json({ error: 'Forbidden - Staff access required' })
+}
+
+// Check if user can mark as urgent (Admin only)
+export function canMarkUrgent(req: Request, res: Response, next: NextFunction) {
+  const user = req.user
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+
+  const { isUrgent } = req.body
+
+  if (!isUrgent) {
+    return next()
+  }
+
+  if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+    return next()
+  }
+
+  return res.status(403).json({ error: 'Only admins can mark messages as urgent' })
+}

@@ -1,35 +1,30 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-# Env
+node_modules/
+dist/
 .env
-.env.local
-.env.*.local
+.env.*
+*.log
+server/.env
+**/node_modules/
 
-# Type check cache
-*.tsbuildinfo
+# Android
+apps/parent/android/app/google-services.json
+apps/parent/android/.gradle/
+apps/parent/android/build/
+apps/parent/android/app/build/
+apps/parent/android/.idea/
+apps/parent/android/local.properties
 
-# Cloudflare Wrangler
-.wrangler
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Android signing
+apps/parent/android/app/wasil-release.keystore
+apps/parent/android/app/signing.properties
+
+# Agent worktrees (transient)
+.claude/worktrees/

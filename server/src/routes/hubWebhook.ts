@@ -1,0 +1,145 @@
+// Wasil Hub webhook receiver (Stage 2 — freshness signal only).
+//
+//   POST /api/hub/webhook
+//
+// Hub fires this whenever roster data changes (pupil.updated, staff.created,
+// class.updated, roles.updated, …; see INTEGRATION.md → Data freshness). This
+// slice implements only the *freshness signal*: verify the HMAC signature, then
+// stamp `School.hubDataStaleSince` so the admin sees the "stale data" banner and
+// can trigger a pull via POST /api/admin/hub-sync. We deliberately do NOT act on
+// the event type here — full event-specific handling (single-pupil deep-links,
+// bulk-vs-single, roles-only refresh) is a documented follow-on.
+//
+// This router is mounted BEFORE the global `express.json()` and parses the body
+// with `express.raw`, because HMAC verification needs the exact bytes Hub signed
+// — re-serialising a parsed object would change them.
+import { Router, raw, Request, Response } from 'express'
+import { createHash, createHmac, timingSafeEqual } from 'crypto'
+import prisma from '../services/prisma.js'
+import { invalidateSchool } from '../services/timetableCache.js'
+import { resyncCalendarForSchool } from '../services/hubCalendarSync.js'
+
+const router = Router()
+
+/**
+ * Verify a Hub webhook signature. Ported verbatim (behaviour-wise) from
+ * `@wasil/pupils-client`'s `verifyWebhookSignature`: the shared secret is
+ * sha256-hashed, that hash keys an HMAC-sha256 over the raw body, compared in
+ * constant time against the `sha256=…` header.
+ */
+export function verifyWebhookSignature(
+  rawBody: string,
+  signatureHeader: string,
+  secret: string,
+): boolean {
+  const expected = signatureHeader.startsWith('sha256=')
+    ? signatureHeader.slice(7)
+    : signatureHeader
+  const secretHash = createHash('sha256').update(secret).digest('hex')
+  const computed = createHmac('sha256', secretHash).update(rawBody).digest('hex')
+  if (expected.length !== computed.length) return false
+  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(computed, 'hex'))
+}
+
+router.post('/webhook', raw({ type: '*/*' }), async (req: Request, res: Response) => {
+  const secret = process.env.HUB_WEBHOOK_SECRET || ''
+  if (!secret) {
+    // Not wired up yet (the secret ships with the service token). Acknowledge
+    // without trusting anything so Hub's delivery log doesn't fill with retries.
+    return res.status(503).json({ error: 'webhook_secret_not_configured' })
+  }
+
+  const signature = req.header('X-Wasil-Signature') || ''
+  const rawBody = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : ''
+  if (!signature || !verifyWebhookSignature(rawBody, signature, secret)) {
+    return res.status(401).json({ error: 'invalid_signature' })
+  }
+
+  // Signature verified. Extract the Hub school id and event type. Any parse
+  // failure is a malformed (but signed) body — 400.
+  let payload: { schoolId?: unknown; event?: unknown }
+  try {
+    payload = JSON.parse(rawBody)
+  } catch {
+    return res.status(400).json({ error: 'invalid_body' })
+  }
+  const hubSchoolId = typeof payload.schoolId === 'string' ? payload.schoolId : null
+  if (!hubSchoolId) {
+    // Signed but no school to attribute the change to — accept, nothing to do.
+    return res.json({ ok: true })
+  }
+  const event = typeof payload.event === 'string' ? payload.event : null
+
+  // A teacher proposal we submitted was reviewed in Hub (fired only to us).
+  //   APPROVE → Hub also created the real CalendarEvent + fired calendar.updated;
+  //     kick the (audience-safe) calendar resync so the pending row is adopted
+  //     and flips to confirmed. We deliberately DON'T flip it here off event_id
+  //     alone — routing approval through the sync keeps a staff-only approval
+  //     from ever reaching parents.
+  //   REJECT → mark the local proposal REJECTED + store the reason, so the
+  //     submitting teacher sees the outcome (parents never saw it — the feed
+  //     excludes any non-null proposalStatus).
+  if (event === 'calendar.proposal_reviewed') {
+    const data = (payload as { data?: Record<string, unknown> }).data ?? {}
+    const proposalId = typeof data.proposal_id === 'string' ? data.proposal_id : null
+    const status = typeof data.status === 'string' ? data.status : null
+    const reason = typeof data.reason === 'string' ? data.reason : null
+    const schools = await prisma.school.findMany({
+      where: { hubSchoolId },
+      select: { id: true },
+    })
+    if (status === 'REJECTED' && proposalId) {
+      await prisma.event.updateMany({
+        where: { hubProposalId: proposalId, schoolId: { in: schools.map((s) => s.id) } },
+        data: { proposalStatus: 'REJECTED', proposalReviewNote: reason },
+      })
+    } else if (status === 'APPROVED') {
+      for (const s of schools) {
+        resyncCalendarForSchool(s.id).catch((err) =>
+          console.error('[hubWebhook] proposal-approved resync failed', s.id, err),
+        )
+      }
+    }
+    return res.json({ ok: true })
+  }
+
+  // A newly published timetable makes our cached class-days stale — drop them
+  // so the next parent request re-reads Hub. This is a timetable event, not a
+  // roster change, so we don't also stamp the roster-freshness flag for it.
+  if (event === 'timetable.version_published') {
+    invalidateSchool(hubSchoolId)
+    return res.json({ ok: true })
+  }
+
+  // Hub's school calendar changed — mark the school stale (drives the banner)
+  // and kick off a best-effort background resync. The resync is dormant-safe:
+  // if the token lacks `calendar:read` scope or the school isn't linked it's a
+  // clean no-op, so we never block the webhook ack on it.
+  if (event === 'calendar.updated') {
+    const linked = await prisma.school.findMany({
+      where: { hubSchoolId },
+      select: { id: true },
+    })
+    await prisma.school.updateMany({
+      where: { hubSchoolId },
+      data: { hubDataStaleSince: new Date() },
+    })
+    for (const s of linked) {
+      resyncCalendarForSchool(s.id).catch((err) =>
+        console.error('[hubWebhook] calendar resync failed', s.id, err),
+      )
+    }
+    return res.json({ ok: true })
+  }
+
+  // Roster change: set the freshness flag. If the school isn't linked here, the
+  // update matches nothing — fine; we simply have nothing to mark stale.
+  await prisma.school.updateMany({
+    where: { hubSchoolId },
+    data: { hubDataStaleSince: new Date() },
+  })
+
+  return res.json({ ok: true })
+})
+
+export default router

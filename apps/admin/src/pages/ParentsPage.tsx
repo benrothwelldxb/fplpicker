@@ -1,0 +1,1171 @@
+import React, { useState } from 'react'
+import { Plus, X, Trash2, Upload, Users, RefreshCw, Mail, Copy, QrCode, CheckCircle, XCircle, Clock, Eye, Search, Send, UserX } from 'lucide-react'
+import { useTheme, useApi, api, ConfirmModal, useToast } from '@wasil/shared'
+import type { Class, ParentInvitation, InvitationStatus } from '@wasil/shared'
+import { StudentSearchSelect } from '../components/StudentSearchSelect'
+
+interface ChildEntry {
+  childName: string
+  classId: string
+}
+
+interface SelectedStudent {
+  id: string
+  fullName: string
+  className: string
+}
+
+interface BulkImportResult {
+  created: number
+  skipped: number
+  errors?: string[]
+}
+
+type Tab = 'invitations' | 'parents'
+
+export function ParentsPage() {
+  const theme = useTheme()
+  const toast = useToast()
+  const [activeTab, setActiveTab] = useState<Tab>('invitations')
+
+  // === Invitations state ===
+  const [statusFilter, setStatusFilter] = useState<InvitationStatus | 'all'>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [page, setPage] = useState(1)
+
+  const { data: invitationsData, refetch: refetchInvitations } = useApi(
+    () => api.parentInvitations.list({ status: statusFilter, search: searchQuery, page, limit: 20 }),
+    [statusFilter, searchQuery, page]
+  )
+  const { data: classes } = useApi<Class[]>(() => api.classes.list(), [])
+
+  const [showForm, setShowForm] = useState(false)
+  const [showBulkImport, setShowBulkImport] = useState(false)
+  const [showDetails, setShowDetails] = useState<ParentInvitation | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [revokeConfirm, setRevokeConfirm] = useState<{ id: string; code: string } | null>(null)
+  const [isRevoking, setIsRevoking] = useState(false)
+
+  // Individual form
+  const [parentName, setParentName] = useState('')
+  const [parentEmail, setParentEmail] = useState('')
+  const [includeMagicLink, setIncludeMagicLink] = useState(true)
+  const [children, setChildren] = useState<ChildEntry[]>([{ childName: '', classId: '' }])
+  const [expiresInDays, setExpiresInDays] = useState(90)
+  const [useStudentSearch, setUseStudentSearch] = useState(true)
+  const [selectedStudents, setSelectedStudents] = useState<SelectedStudent[]>([])
+
+  // Bulk import
+  const [bulkText, setBulkText] = useState('')
+  const [bulkResult, setBulkResult] = useState<BulkImportResult | null>(null)
+  const [isBulkImporting, setIsBulkImporting] = useState(false)
+
+  // === Registered Parents state ===
+  const [parentsSearch, setParentsSearch] = useState('')
+  const [parentsPage, setParentsPage] = useState(1)
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; email: string } | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [sendingLoginLink, setSendingLoginLink] = useState<string | null>(null)
+  const [setPasswordFor, setSetPasswordFor] = useState<{ id: string; name: string; email: string } | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [isSettingPassword, setIsSettingPassword] = useState(false)
+  const [selectedParentIds, setSelectedParentIds] = useState<Set<string>>(new Set())
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<{ current: number; total: number } | null>(null)
+  const [inviteAllConfirm, setInviteAllConfirm] = useState(false)
+  const [sendingInvites, setSendingInvites] = useState(false)
+  const [sendingInviteFor, setSendingInviteFor] = useState<string | null>(null)
+
+  const { data: parentsData, refetch: refetchParents } = useApi(
+    () => api.parentInvitations.listParents({ search: parentsSearch, page: parentsPage, limit: 50 }),
+    [parentsSearch, parentsPage]
+  )
+
+  const resetForm = () => {
+    setShowForm(false)
+    setShowBulkImport(false)
+    setShowDetails(null)
+    setParentName('')
+    setParentEmail('')
+    setIncludeMagicLink(true)
+    setChildren([{ childName: '', classId: '' }])
+    setExpiresInDays(90)
+    setBulkText('')
+    setBulkResult(null)
+    setSelectedStudents([])
+  }
+
+  const addChild = () => {
+    setChildren([...children, { childName: '', classId: '' }])
+  }
+
+  const removeChild = (index: number) => {
+    if (children.length > 1) {
+      setChildren(children.filter((_, i) => i !== index))
+    }
+  }
+
+  const updateChild = (index: number, field: keyof ChildEntry, value: string) => {
+    setChildren(children.map((c, i) => i === index ? { ...c, [field]: value } : c))
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (useStudentSearch) {
+      // New approach: use selected students
+      if (selectedStudents.length === 0) {
+        toast.warning('Please select at least one student')
+        return
+      }
+      setIsSubmitting(true)
+      try {
+        await api.parentInvitations.create({
+          parentName: parentName.trim() || undefined,
+          parentEmail: parentEmail.trim() || undefined,
+          studentIds: selectedStudents.map(s => s.id),
+          includeMagicLink,
+          expiresInDays,
+        })
+        resetForm()
+        refetchInvitations()
+      } catch (error) {
+        toast.error(`Failed to create invitation: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      } finally {
+        setIsSubmitting(false)
+      }
+    } else {
+      // Legacy approach: use child names
+      const validChildren = children.filter(c => c.childName.trim() && c.classId)
+      if (validChildren.length === 0) {
+        toast.warning('Please add at least one child with a name and class')
+        return
+      }
+      setIsSubmitting(true)
+      try {
+        await api.parentInvitations.create({
+          parentName: parentName.trim() || undefined,
+          parentEmail: parentEmail.trim() || undefined,
+          children: validChildren,
+          includeMagicLink,
+          expiresInDays,
+        })
+        resetForm()
+        refetchInvitations()
+      } catch (error) {
+        toast.error(`Failed to create invitation: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      } finally {
+        setIsSubmitting(false)
+      }
+    }
+  }
+
+  const handleBulkImport = async () => {
+    if (!bulkText.trim()) return
+    setIsBulkImporting(true)
+    try {
+      const result = await api.parentInvitations.bulkImport(bulkText, expiresInDays)
+      setBulkResult({ created: result.created, skipped: result.skipped, errors: result.errors })
+      refetchInvitations()
+    } catch (error) {
+      toast.error(`Bulk import failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setIsBulkImporting(false)
+    }
+  }
+
+  const handleRevoke = async () => {
+    if (!revokeConfirm) return
+    setIsRevoking(true)
+    try {
+      await api.parentInvitations.revoke(revokeConfirm.id)
+      refetchInvitations()
+      setRevokeConfirm(null)
+    } catch (error) {
+      toast.error(`Failed to revoke: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setIsRevoking(false)
+    }
+  }
+
+  const handleRegenerate = async (id: string) => {
+    try {
+      await api.parentInvitations.regenerate(id)
+      refetchInvitations()
+      if (showDetails?.id === id) {
+        const updated = await api.parentInvitations.get(id)
+        setShowDetails(updated)
+      }
+    } catch (error) {
+      toast.error(`Failed to regenerate: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const handleResend = async (id: string) => {
+    try {
+      await api.parentInvitations.resend(id)
+      toast.success('Email sent successfully')
+    } catch (error) {
+      toast.error(`Failed to resend: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const handleDeleteParent = async () => {
+    if (!deleteConfirm) return
+    setIsDeleting(true)
+    try {
+      await api.parentInvitations.deleteParent(deleteConfirm.id)
+      toast.success('Parent account deleted')
+      refetchParents()
+      setDeleteConfirm(null)
+    } catch (error) {
+      toast.error(`Failed to delete parent: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  const handleBulkDeleteParents = async () => {
+    if (selectedParentIds.size === 0) return
+    setIsDeleting(true)
+    const total = selectedParentIds.size
+    setBulkDeleteProgress({ current: 0, total })
+    try {
+      let deleted = 0
+      let current = 0
+      for (const id of selectedParentIds) {
+        current++
+        setBulkDeleteProgress({ current, total })
+        try {
+          await api.parentInvitations.deleteParent(id)
+          deleted++
+        } catch { /* continue with others */ }
+      }
+      toast.success(`Deleted ${deleted} parent account${deleted !== 1 ? 's' : ''}`)
+      setSelectedParentIds(new Set())
+      setBulkDeleteConfirm(false)
+      refetchParents()
+    } catch (error) {
+      toast.error('Failed to delete parents')
+    } finally {
+      setIsDeleting(false)
+      setBulkDeleteProgress(null)
+    }
+  }
+
+  const toggleParentSelect = (id: string) => {
+    setSelectedParentIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllParents = () => {
+    if (selectedParentIds.size === registeredParents.length) {
+      setSelectedParentIds(new Set())
+    } else {
+      setSelectedParentIds(new Set(registeredParents.map(p => p.id)))
+    }
+  }
+
+  const handleSendLoginLink = async (id: string) => {
+    setSendingLoginLink(id)
+    try {
+      const result = await api.parentInvitations.resetParentPassword(id)
+      if (result.emailSent) {
+        toast.success(result.message)
+      } else {
+        toast.error(result.message)
+      }
+    } catch (error) {
+      toast.error(`Failed to send login link: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setSendingLoginLink(null)
+    }
+  }
+
+  // Passwordless "invite parents" — emails Hub-provisioned (or any) parents a
+  // welcome telling them to sign in with their email + a 6-digit code. Omitting
+  // ids invites every parent in the school with an email (re-sendable, so it's
+  // safe to re-run for parents who were already invited).
+  const handleSendAllInvites = async () => {
+    setSendingInvites(true)
+    try {
+      const result = await api.parentInvitations.sendInvites()
+      toast.success(`Invited ${result.sent} parent${result.sent !== 1 ? 's' : ''} (${result.skipped} skipped — no email)`)
+      refetchParents()
+      setInviteAllConfirm(false)
+    } catch (error) {
+      toast.error(`Failed to send invites: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setSendingInvites(false)
+    }
+  }
+
+  const handleSendInviteOne = async (id: string) => {
+    setSendingInviteFor(id)
+    try {
+      const result = await api.parentInvitations.sendInvites([id])
+      if (result.sent > 0) {
+        toast.success('Sign-in invite sent')
+      } else {
+        toast.error('Could not send invite — no email on file')
+      }
+      refetchParents()
+    } catch (error) {
+      toast.error(`Failed to send invite: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setSendingInviteFor(null)
+    }
+  }
+
+  const handleSetPassword = async () => {
+    if (!setPasswordFor || !newPassword) return
+    if (newPassword.length < 8) {
+      toast.warning('Password must be at least 8 characters')
+      return
+    }
+    setIsSettingPassword(true)
+    try {
+      const result = await api.parentInvitations.setParentPassword(setPasswordFor.id, newPassword)
+      toast.success(result.message)
+      setSetPasswordFor(null)
+      setNewPassword('')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to set password')
+    } finally {
+      setIsSettingPassword(false)
+    }
+  }
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
+  }
+
+  const getStatusBadge = (status: InvitationStatus) => {
+    switch (status) {
+      case 'PENDING':
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1" />Pending</span>
+      case 'REDEEMED':
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"><CheckCircle className="h-3 w-3 mr-1" />Redeemed</span>
+      case 'EXPIRED':
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800"><Clock className="h-3 w-3 mr-1" />Expired</span>
+      case 'REVOKED':
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />Revoked</span>
+    }
+  }
+
+  const invitations = invitationsData?.invitations || []
+  const pagination = invitationsData?.pagination
+  const registeredParents = parentsData?.parents || []
+  const parentsPagination = parentsData?.pagination
+
+  return (
+    <div>
+      {/* Tabs */}
+      <div className="flex items-center border-b border-slate-200 mb-6">
+        <button
+          onClick={() => setActiveTab('invitations')}
+          className={`px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeTab === 'invitations'
+              ? 'border-current text-slate-900'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+          style={activeTab === 'invitations' ? { borderColor: theme.colors.brandColor, color: theme.colors.brandColor } : undefined}
+        >
+          Invitations
+          {pagination && <span className="ml-2 text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full">{pagination.total}</span>}
+        </button>
+        <button
+          onClick={() => setActiveTab('parents')}
+          className={`px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeTab === 'parents'
+              ? 'border-current text-slate-900'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+          style={activeTab === 'parents' ? { borderColor: theme.colors.brandColor, color: theme.colors.brandColor } : undefined}
+        >
+          Registered Parents
+          {parentsPagination && <span className="ml-2 text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full">{parentsPagination.total}</span>}
+        </button>
+      </div>
+
+      {activeTab === 'invitations' && (
+        <>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-semibold text-slate-900">Parent Invitations</h2>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => { setShowBulkImport(!showBulkImport); setShowForm(false) }}
+                className="flex items-center space-x-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
+              >
+                <Upload className="h-4 w-4" />
+                <span>Bulk Import</span>
+              </button>
+              <button
+                onClick={() => showForm ? resetForm() : (setShowForm(true), setShowBulkImport(false))}
+                className="flex items-center space-x-2 px-4 py-2 rounded-lg text-white"
+                style={{ backgroundColor: theme.colors.brandColor }}
+              >
+                {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                <span>{showForm ? 'Cancel' : 'Create Invitation'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div className="flex items-center space-x-4 mb-6">
+            <select
+              value={statusFilter}
+              onChange={e => { setStatusFilter(e.target.value as InvitationStatus | 'all'); setPage(1) }}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Status</option>
+              <option value="PENDING">Pending</option>
+              <option value="REDEEMED">Redeemed</option>
+              <option value="EXPIRED">Expired</option>
+              <option value="REVOKED">Revoked</option>
+            </select>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => { setSearchQuery(e.target.value); setPage(1) }}
+              placeholder="Search by email, name, or code..."
+              className="flex-1 max-w-md px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {showBulkImport && (
+            <div className="bg-white rounded-lg border border-slate-200 p-6 mb-6 space-y-4">
+              <h3 className="font-medium text-gray-900">Bulk Import Invitations</h3>
+              <p className="text-sm text-gray-500">
+                Paste CSV data. Use <strong>Child UPN</strong> (recommended) or Child Name + Class Name.
+              </p>
+              <textarea
+                value={bulkText}
+                onChange={e => setBulkText(e.target.value)}
+                rows={8}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                placeholder={"Parent Email,Parent Name,Child UPN\njohn@example.com,John Smith,A123456789\njohn@example.com,John Smith,A987654321\n\n--- OR legacy format ---\nParent Email,Parent Name,Child Name,Class Name\njohn@example.com,John Smith,Emma Smith,Y1 Blue"}
+              />
+              <div className="flex items-center space-x-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Expires In (days)</label>
+                  <input
+                    type="number"
+                    value={expiresInDays}
+                    onChange={e => setExpiresInDays(parseInt(e.target.value) || 90)}
+                    min={1}
+                    max={365}
+                    className="w-24 px-3 py-2 border border-gray-300 rounded-lg"
+                  />
+                </div>
+                <div className="flex-1" />
+                <button
+                  onClick={handleBulkImport}
+                  disabled={isBulkImporting || !bulkText.trim()}
+                  className="px-4 py-2 rounded-lg text-white disabled:opacity-50"
+                  style={{ backgroundColor: theme.colors.brandColor }}
+                >
+                  {isBulkImporting ? 'Importing...' : 'Import Invitations'}
+                </button>
+              </div>
+
+              {bulkResult && (
+                <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+                  <p className="font-medium text-gray-900">Import Complete</p>
+                  <div className="flex items-center space-x-4 mt-2 text-sm">
+                    <span className="text-green-600">{bulkResult.created} created</span>
+                    {bulkResult.skipped > 0 && <span className="text-amber-600">{bulkResult.skipped} skipped</span>}
+                  </div>
+                  {bulkResult.errors && bulkResult.errors.length > 0 && (
+                    <ul className="mt-2 text-sm text-red-600 space-y-1">
+                      {bulkResult.errors.map((err, i) => <li key={i}>{err}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {showForm && (
+            <form onSubmit={handleSubmit} className="bg-white rounded-lg border border-slate-200 p-6 mb-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Parent Name (optional)</label>
+                  <input
+                    type="text"
+                    value={parentName}
+                    onChange={e => setParentName(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="John Smith"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Parent Email (optional)</label>
+                  <input
+                    type="email"
+                    value={parentEmail}
+                    onChange={e => setParentEmail(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="john@example.com"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">Children</label>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setUseStudentSearch(true)}
+                      className={`text-xs px-2 py-1 rounded ${useStudentSearch ? 'bg-blue-100 text-blue-800' : 'text-gray-500 hover:bg-gray-100'}`}
+                    >
+                      Search Students
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUseStudentSearch(false)}
+                      className={`text-xs px-2 py-1 rounded ${!useStudentSearch ? 'bg-blue-100 text-blue-800' : 'text-gray-500 hover:bg-gray-100'}`}
+                    >
+                      Manual Entry
+                    </button>
+                  </div>
+                </div>
+
+                {useStudentSearch ? (
+                  <StudentSearchSelect
+                    selectedStudents={selectedStudents}
+                    onChange={setSelectedStudents}
+                    placeholder="Search for students by name..."
+                  />
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      {children.map((child, index) => (
+                        <div key={index} className="flex items-center space-x-2">
+                          <input
+                            type="text"
+                            value={child.childName}
+                            onChange={e => updateChild(index, 'childName', e.target.value)}
+                            placeholder="Child's name"
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          />
+                          <select
+                            value={child.classId}
+                            onChange={e => updateChild(index, 'classId', e.target.value)}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">Select class...</option>
+                            {classes?.map(cls => (
+                              <option key={cls.id} value={cls.id}>{cls.name}</option>
+                            ))}
+                          </select>
+                          {children.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeChild(index)}
+                              className="p-2 text-gray-400 hover:text-red-600"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addChild}
+                      className="mt-2 text-sm text-blue-600 hover:text-blue-800"
+                    >
+                      + Add another child
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-6">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeMagicLink}
+                    onChange={e => setIncludeMagicLink(e.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="text-sm">Include magic link for email</span>
+                </label>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-gray-600">Expires in</span>
+                  <input
+                    type="number"
+                    value={expiresInDays}
+                    onChange={e => setExpiresInDays(parseInt(e.target.value) || 90)}
+                    min={1}
+                    max={365}
+                    className="w-20 px-2 py-1 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <span className="text-sm text-gray-600">days</span>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-2 rounded-lg text-white disabled:opacity-50"
+                style={{ backgroundColor: theme.colors.brandColor }}
+              >
+                {isSubmitting ? 'Creating...' : 'Create Invitation'}
+              </button>
+            </form>
+          )}
+
+          {/* Invitations Table */}
+          <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Access Code</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Parent</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Children</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Status</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Created</th>
+                  <th className="text-right px-4 py-3 text-sm font-medium text-gray-700">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invitations.map(inv => (
+                  <tr key={inv.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center space-x-2">
+                        <code className="text-sm font-mono bg-slate-100 px-2 py-0.5 rounded">{inv.accessCode}</code>
+                        <button
+                          onClick={() => copyToClipboard(inv.accessCode)}
+                          className="p-1 text-gray-400 hover:text-gray-600"
+                          title="Copy code"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div>
+                        {inv.parentName && <div className="text-sm font-medium text-gray-900">{inv.parentName}</div>}
+                        {inv.parentEmail && <div className="text-sm text-gray-500">{inv.parentEmail}</div>}
+                        {!inv.parentName && !inv.parentEmail && <span className="text-sm text-gray-400">-</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {inv.children.map((child, i) => (
+                          <span key={`child-${i}`} className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                            {child.childName} ({child.className})
+                          </span>
+                        ))}
+                        {inv.students?.map((student, i) => (
+                          <span key={`student-${i}`} className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800">
+                            {student.studentName} ({student.className})
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {getStatusBadge(inv.status)}
+                      {inv.status === 'REDEEMED' && inv.redeemedByUser && (
+                        <div className="text-xs text-gray-500 mt-1">
+                          by {inv.redeemedByUser.email}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-500">
+                      {new Date(inv.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end space-x-1">
+                        <button
+                          onClick={() => setShowDetails(inv)}
+                          className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"
+                          title="View details"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                        {inv.status === 'PENDING' && (
+                          <>
+                            <button
+                              onClick={() => handleRegenerate(inv.id)}
+                              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                              title="Regenerate codes"
+                            >
+                              <RefreshCw className="h-4 w-4" />
+                            </button>
+                            {inv.parentEmail && (
+                              <button
+                                onClick={() => handleResend(inv.id)}
+                                className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg"
+                                title="Resend email"
+                              >
+                                <Mail className="h-4 w-4" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setRevokeConfirm({ id: inv.id, code: inv.accessCode })}
+                              className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                              title="Revoke invitation"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {invitations.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-12 text-center text-gray-500">
+                      <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p>No invitations found. Create your first invitation above.</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            {pagination && pagination.totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200">
+                <p className="text-sm text-gray-600">
+                  Showing {(page - 1) * pagination.limit + 1} to {Math.min(page * pagination.limit, pagination.total)} of {pagination.total}
+                </p>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))}
+                    disabled={page === pagination.totalPages}
+                    className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {activeTab === 'parents' && (
+        <>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-semibold text-slate-900">Registered Parents</h2>
+            <button
+              onClick={() => setInviteAllConfirm(true)}
+              className="flex items-center space-x-2 px-4 py-2 rounded-lg text-white"
+              style={{ backgroundColor: theme.colors.brandColor }}
+            >
+              <Mail className="h-4 w-4" />
+              <span>Send sign-in invites</span>
+            </button>
+          </div>
+
+          {/* Search */}
+          <div className="flex items-center space-x-4 mb-6">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                value={parentsSearch}
+                onChange={e => { setParentsSearch(e.target.value); setParentsPage(1) }}
+                placeholder="Search by name or email..."
+                className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Bulk action bar */}
+          {selectedParentIds.size > 0 && (
+            <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-4">
+              <span className="text-sm font-medium text-blue-800">
+                {selectedParentIds.size} parent{selectedParentIds.size !== 1 ? 's' : ''} selected
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedParentIds(new Set())}
+                  className="px-3 py-1.5 text-sm text-blue-700 hover:bg-blue-100 rounded-lg"
+                >
+                  Clear selection
+                </button>
+                <button
+                  onClick={() => setBulkDeleteConfirm(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete selected
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Parents Table */}
+          <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={registeredParents.length > 0 && selectedParentIds.size === registeredParents.length}
+                      onChange={toggleSelectAllParents}
+                      className="rounded border-gray-300"
+                    />
+                  </th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Name</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Email</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Children</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Last Login</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Invite Status</th>
+                  <th className="text-right px-4 py-3 text-sm font-medium text-gray-700">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {registeredParents.map(parent => (
+                  <tr key={parent.id} className={`border-b border-slate-100 hover:bg-slate-50 ${selectedParentIds.has(parent.id) ? 'bg-blue-50/50' : ''}`}>
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedParentIds.has(parent.id)}
+                        onChange={() => toggleParentSelect(parent.id)}
+                        className="rounded border-gray-300"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center space-x-3">
+                        {parent.avatarUrl ? (
+                          <img src={parent.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+                        ) : (
+                          <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center">
+                            <span className="text-sm font-medium text-slate-600">
+                              {parent.name?.charAt(0)?.toUpperCase() || '?'}
+                            </span>
+                          </div>
+                        )}
+                        <span className="text-sm font-medium text-gray-900">{parent.name || '-'}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-500">{parent.email}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {parent.children.length > 0 ? (
+                          parent.children.map((child, i) => (
+                            <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                              {child.name} ({child.className})
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-gray-400">No children linked</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-500">
+                      {parent.lastLoginAt
+                        ? new Date(parent.lastLoginAt).toLocaleDateString()
+                        : <span className="text-gray-400">Never</span>
+                      }
+                    </td>
+                    <td className="px-4 py-3">
+                      {parent.welcomeSentAt ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                          Invited {new Date(parent.welcomeSentAt).toLocaleDateString()}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">Not invited</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end space-x-1">
+                        <button
+                          onClick={() => handleSendInviteOne(parent.id)}
+                          disabled={sendingInviteFor === parent.id}
+                          className="flex items-center space-x-1 px-3 py-1.5 text-xs font-medium rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 transition-colors"
+                          title={parent.welcomeSentAt ? 'Resend sign-in invite' : 'Send sign-in invite'}
+                        >
+                          <Mail className="h-3 w-3" />
+                          <span>{sendingInviteFor === parent.id ? 'Sending...' : parent.welcomeSentAt ? 'Resend' : 'Send'}</span>
+                        </button>
+                        <button
+                          onClick={() => handleSendLoginLink(parent.id)}
+                          disabled={sendingLoginLink === parent.id}
+                          className="flex items-center space-x-1 px-3 py-1.5 text-xs font-medium rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 transition-colors"
+                          title="Send login link"
+                        >
+                          <Send className="h-3 w-3" />
+                          <span>{sendingLoginLink === parent.id ? 'Sending...' : 'Send Login Link'}</span>
+                        </button>
+                        <button
+                          onClick={() => { setSetPasswordFor({ id: parent.id, name: parent.name || 'Unknown', email: parent.email }); setNewPassword('') }}
+                          className="flex items-center space-x-1 px-3 py-1.5 text-xs font-medium rounded-lg text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors"
+                          title="Set password"
+                        >
+                          <span>Set Password</span>
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirm({ id: parent.id, name: parent.name || 'Unknown', email: parent.email })}
+                          className="flex items-center space-x-1 px-3 py-1.5 text-xs font-medium rounded-lg text-red-700 bg-red-50 hover:bg-red-100 transition-colors"
+                          title="Delete parent account"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          <span>Delete</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {registeredParents.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-12 text-center text-gray-500">
+                      <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p>No registered parents found.</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            {parentsPagination && parentsPagination.totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200">
+                <p className="text-sm text-gray-600">
+                  Showing {(parentsPage - 1) * parentsPagination.limit + 1} to {Math.min(parentsPage * parentsPagination.limit, parentsPagination.total)} of {parentsPagination.total}
+                </p>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => setParentsPage(p => Math.max(1, p - 1))}
+                    disabled={parentsPage === 1}
+                    className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setParentsPage(p => Math.min(parentsPagination.totalPages, p + 1))}
+                    disabled={parentsPage === parentsPagination.totalPages}
+                    className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Details Modal */}
+      {showDetails && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">Invitation Details</h3>
+                <button onClick={() => setShowDetails(null)} className="p-2 text-gray-400 hover:text-gray-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Access Code</label>
+                <div className="flex items-center space-x-2">
+                  <code className="text-lg font-mono bg-slate-100 px-3 py-2 rounded">{showDetails.accessCode}</code>
+                  <button
+                    onClick={() => copyToClipboard(showDetails.accessCode)}
+                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              {showDetails.registrationUrl && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Registration URL</label>
+                  <div className="flex items-center space-x-2">
+                    <code className="text-xs bg-slate-100 px-2 py-1 rounded break-all">{showDetails.registrationUrl}</code>
+                    <button
+                      onClick={() => copyToClipboard(showDetails.registrationUrl!)}
+                      className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded flex-shrink-0"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {showDetails.qrCodeUrl && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">QR Code</label>
+                  <img src={showDetails.qrCodeUrl} alt="QR Code" className="w-40 h-40 border rounded" />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                <div>{getStatusBadge(showDetails.status)}</div>
+              </div>
+
+              {showDetails.parentName && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Parent Name</label>
+                  <p className="text-gray-900">{showDetails.parentName}</p>
+                </div>
+              )}
+
+              {showDetails.parentEmail && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Parent Email</label>
+                  <p className="text-gray-900">{showDetails.parentEmail}</p>
+                </div>
+              )}
+
+              {showDetails.children.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Children (Manual Entry)</label>
+                  <div className="space-y-1">
+                    {showDetails.children.map((child, i) => (
+                      <div key={i} className="text-sm text-gray-900">
+                        {child.childName} - {child.className}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {showDetails.students && showDetails.students.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Students</label>
+                  <div className="space-y-1">
+                    {showDetails.students.map((student, i) => (
+                      <div key={i} className="text-sm text-gray-900">
+                        {student.studentName} - {student.className}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {showDetails.expiresAt && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Expires</label>
+                  <p className="text-gray-900">{new Date(showDetails.expiresAt).toLocaleDateString()}</p>
+                </div>
+              )}
+
+              {showDetails.redeemedAt && showDetails.redeemedByUser && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Redeemed</label>
+                  <p className="text-gray-900">
+                    {new Date(showDetails.redeemedAt).toLocaleDateString()} by {showDetails.redeemedByUser.name} ({showDetails.redeemedByUser.email})
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {revokeConfirm && (
+        <ConfirmModal
+          title="Revoke Invitation?"
+          message={`Are you sure you want to revoke invitation ${revokeConfirm.code}? The access code will no longer work.`}
+          confirmLabel="Revoke"
+          variant="danger"
+          isLoading={isRevoking}
+          onConfirm={handleRevoke}
+          onCancel={() => setRevokeConfirm(null)}
+        />
+      )}
+
+      {deleteConfirm && (
+        <ConfirmModal
+          title="Delete Parent Account?"
+          message={`Are you sure you want to delete the account for ${deleteConfirm.name} (${deleteConfirm.email})? This will permanently remove their account and all associated data. This action cannot be undone.`}
+          confirmLabel="Delete Account"
+          variant="danger"
+          isLoading={isDeleting}
+          onConfirm={handleDeleteParent}
+          onCancel={() => setDeleteConfirm(null)}
+        />
+      )}
+
+      {bulkDeleteConfirm && (
+        <ConfirmModal
+          title={`Delete ${selectedParentIds.size} Parent Account${selectedParentIds.size !== 1 ? 's' : ''}?`}
+          message={
+            bulkDeleteProgress
+              ? `Deleting... ${bulkDeleteProgress.current} of ${bulkDeleteProgress.total}`
+              : `Are you sure you want to delete ${selectedParentIds.size} parent account${selectedParentIds.size !== 1 ? 's' : ''}? All associated data will be permanently removed. This action cannot be undone.`
+          }
+          confirmLabel={
+            bulkDeleteProgress
+              ? `Deleting ${bulkDeleteProgress.current}/${bulkDeleteProgress.total}...`
+              : `Delete ${selectedParentIds.size} Account${selectedParentIds.size !== 1 ? 's' : ''}`
+          }
+          variant="danger"
+          isLoading={isDeleting}
+          onConfirm={handleBulkDeleteParents}
+          onCancel={() => !isDeleting && setBulkDeleteConfirm(false)}
+        />
+      )}
+
+      {inviteAllConfirm && (
+        <ConfirmModal
+          title="Send sign-in invites?"
+          message="This emails sign-in instructions to every registered parent in your school who has an email on file — parents open the app and sign in with their email + a 6-digit code. Already-invited parents get a re-send too. Parents with no email are skipped."
+          confirmLabel={sendingInvites ? 'Sending...' : 'Send invites'}
+          isLoading={sendingInvites}
+          onConfirm={handleSendAllInvites}
+          onCancel={() => setInviteAllConfirm(false)}
+        />
+      )}
+
+      {setPasswordFor && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Set Password</h3>
+            <p className="text-sm text-gray-500 mb-4">{setPasswordFor.name} ({setPasswordFor.email})</p>
+            <input
+              type="text"
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+              placeholder="Enter new password (min 8 chars)"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 mb-1"
+              autoFocus
+            />
+            <p className="text-xs text-gray-400 mb-4">Must be at least 8 characters</p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setSetPasswordFor(null); setNewPassword('') }}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSetPassword}
+                disabled={isSettingPassword || newPassword.length < 8}
+                className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
+                style={{ backgroundColor: '#C4506E' }}
+              >
+                {isSettingPassword ? 'Setting...' : 'Set Password'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

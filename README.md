@@ -1,163 +1,236 @@
-# MyFPLScout — Fantasy Premier League Companion
+# Wasil - School Communication App
 
-A production-ready Fantasy Premier League companion: statistical **Expected
-Points** projections, a **squad optimiser**, a **lineup & captaincy** picker,
-a **transfer planner**, and a configurable **preference engine** that
-personalises every recommendation — all driven by the public FPL API. **No AI
-or LLMs** are used; every engine is transparent and inspectable.
+A full-stack school communication platform built with React, Express, and PostgreSQL.
 
-Built as a modern, installable **PWA** with offline support.
+## Tech Stack
 
-## Tech stack
+- **Frontend**: React + TypeScript + Vite + Tailwind CSS
+- **Backend**: Node.js + Express + TypeScript
+- **Database**: PostgreSQL with Prisma ORM
+- **Authentication**: OAuth 2.0 (Google + Microsoft) via Passport.js
 
-- **React 19** + **TypeScript** (strict) + **Vite 6**
-- **Tailwind CSS** + **shadcn/ui** (Radix primitives)
-- **TanStack Query** (server state, persisted) + **Zustand** (client state)
-- **React Router** (nested layouts, lazy routes)
-- **React Hook Form** + **Zod** (validation)
-- **vite-plugin-pwa** (Workbox service worker) · **Vitest** (tests)
-
-## Features
-
-| Route | What it does |
-| --- | --- |
-| `/` Dashboard | Overview placeholder |
-| `/players` | Virtualised, filterable/sortable explorer for every player |
-| `/ratings` | Weighted player scoring engine, personalised, with full breakdowns |
-| `/predictions` | Statistical **xPts** for the next 1/3/5/8 GWs, fully itemised + confidence |
-| `/optimiser` | Highest projected-points **legal squad** for a budget & horizon |
-| `/lineup` | Auto best XI, bench order, captain & vice — with manual overrides |
-| `/transfers` | Best single / double / **wildcard** moves, with hits & reasoning |
-| `/squad` | Manual squad builder enforcing all FPL rules |
-| `/fixtures` | Fixture-difficulty analysis & coloured runs |
-| `/preferences` | Preference profiles + onboarding that personalise the engines |
-
-## Architecture
-
-Feature-based, one folder per vertical slice under `src/features/`, each with a
-public `index.ts` barrel. Shared UI lives in `src/components`, cross-cutting
-state in `src/store`, the API layer in `src/services`.
-
-Recommendation engines compose in a clean, one-directional graph:
+## Project Structure
 
 ```
-predictions ─► optimiser ─► transfers
-     │            │            ▲
-     └──► lineup ─┴────────────┘
-preferences ─► scoring        (all consume predictions/fixtures)
+wasil/
+├── client/                    # React frontend (Vite)
+│   ├── src/
+│   │   ├── components/        # UI components
+│   │   ├── pages/            # Route pages
+│   │   ├── hooks/            # Custom hooks
+│   │   ├── services/         # API client
+│   │   ├── contexts/         # React contexts
+│   │   └── types/            # TypeScript interfaces
+│   └── package.json
+├── server/                    # Express backend
+│   ├── src/
+│   │   ├── routes/           # API route handlers
+│   │   ├── middleware/       # Auth, validation
+│   │   └── services/         # Business logic
+│   ├── prisma/
+│   │   ├── schema.prisma     # Database schema
+│   │   └── seed.ts           # Seed data
+│   └── package.json
+└── README.md
 ```
 
-- **`predictions`** is a standalone engine behind a `PredictionEngine`
-  interface, so a future ML model can replace it without touching consumers.
-- **`preferences`** exposes a `PreferenceService`; every recommendation engine
-  runs its scores through it for personalisation + transparency.
-- All tuning coefficients live in single config files
-  (`predictions/config.ts`, `scoring/config.ts`, `optimiser/config.ts`).
+## Prerequisites
 
-```
-src/
-  app/            App root, providers, error boundary, pages
-  components/     ui/ (shadcn), common/ (PageHeader, StatCard, skeletons…)
-  features/       fpl, fixtures, player-explorer, squad-builder, preferences,
-                  scoring, predictions, optimiser, lineup, transfers
-  hooks/          useTheme, useMediaQuery, useDebouncedValue, useOnlineStatus
-  layouts/        RootLayout, AppLayout (shell), header/nav/footer
-  lib/            cn(), env, query client
-  routes/         router (lazy), paths, navigation model
-  services/api/   Axios instance, interceptors, typed helpers
-  store/          Zustand app store (theme, sidebar, loading)
-  styles/         Global CSS + theme tokens + a11y/motion
-  test/           test factories
-```
+- Node.js 18+
+- PostgreSQL 14+
+- npm or yarn
 
-## Getting started
+## Getting Started
+
+### 1. Clone and Install Dependencies
 
 ```bash
+# Install client dependencies
+cd client
 npm install
-cp .env.example .env      # optional: set VITE_API_BASE_URL
-npm run dev               # http://localhost:5173  (proxies /api to the FPL API)
+
+# Install server dependencies
+cd ../server
+npm install
 ```
 
-### Scripts
-
-| Script | Purpose |
-| --- | --- |
-| `npm run dev` | Dev server with the FPL API proxy |
-| `npm run build` | Type-check + production build (zero warnings) |
-| `npm run preview` | Preview the production build |
-| `npm run typecheck` | Types only |
-| `npm run lint` | ESLint |
-| `npm run test` | Run the Vitest suite |
-
-## API
-
-The app talks to the public FPL API through a relative `/api` base URL. In
-**development**, Vite proxies `/api/*` to `https://fantasy.premierleague.com`
-(the FPL API sends no CORS headers, so a browser can't call it directly). In
-**production**, the included Cloudflare Pages Function at
-`functions/api/[[path]].ts` proxies `/api/*` to the FPL API on the deployed
-origin — no extra setup on Cloudflare Pages. To use a different backend
-instead, set `VITE_API_BASE_URL`.
-
-## PWA & offline
-
-- Installable (web app manifest + maskable icon), auto-updating service worker.
-- **Persistent caching**: the TanStack Query cache is saved to `localStorage`,
-  so the app renders instantly from cache on reload.
-- **Offline mode**: the service worker caches the app shell, FPL API responses
-  (stale-while-revalidate), and player/club images (cache-first). An offline
-  banner appears when the network drops; cached data stays usable.
-
-## Accessibility & performance
-
-- WCAG-AA minded: skip-to-content link, semantic landmarks, `aria-current`
-  navigation, labelled controls, visible focus rings, and
-  `prefers-reduced-motion` support.
-- Route-level **code splitting** (lazy pages), vendor chunk splitting,
-  virtualised long lists, memoised engines, debounced search, lazy images with
-  graceful fallbacks, and skeleton loaders.
-
-## Testing
-
-Vitest covers the pure engine logic — squad rules, the Poisson prediction
-model (contributions sum exactly to xPts), the optimiser constraints, and the
-lineup auto-pick:
+### 2. Set Up Environment Variables
 
 ```bash
-npm run test
+# In server directory, copy the example env file
+cp .env.example .env
+
+# Edit .env with your configuration:
+# - DATABASE_URL: Your PostgreSQL connection string
+# - SESSION_SECRET: A random secret for sessions
+# - GOOGLE_CLIENT_ID/SECRET: (optional) For Google OAuth
+# - MICROSOFT_CLIENT_ID/SECRET: (optional) For Microsoft OAuth
 ```
+
+### 3. Set Up the Database
+
+```bash
+# In server directory
+npm run db:push      # Push schema to database
+npm run db:generate  # Generate Prisma client
+npm run db:seed      # Seed demo data
+```
+
+### 4. Start Development Servers
+
+```bash
+# Terminal 1: Start the backend
+cd server
+npm run dev
+
+# Terminal 2: Start the frontend
+cd client
+npm run dev
+```
+
+The frontend will be available at `http://localhost:3000` and the backend at `http://localhost:4000`.
+
+## Demo Login
+
+For development, use the demo login buttons on the login page:
+- **Parent Login**: Uses `sarah@example.com`
+- **Admin Login**: Uses `admin@vhps.ae`
+
+## API Endpoints
+
+### Authentication
+- `GET /auth/google` - Initiate Google OAuth
+- `GET /auth/microsoft` - Initiate Microsoft OAuth
+- `GET /auth/me` - Get current user
+- `POST /auth/logout` - Logout
+- `POST /auth/demo-login` - Demo login (dev only)
+
+### Messages
+- `GET /api/messages` - List messages for user
+- `GET /api/messages/all` - List all messages (admin)
+- `POST /api/messages` - Create message (admin)
+- `POST /api/messages/:id/ack` - Acknowledge message
+
+### Surveys
+- `GET /api/surveys` - List active surveys
+- `POST /api/surveys` - Create survey (admin)
+- `POST /api/surveys/:id/respond` - Submit response
+
+### Events
+- `GET /api/events` - List events
+- `POST /api/events` - Create event (admin)
+- `POST /api/events/:id/rsvp` - Submit RSVP
+
+### Schedule
+- `GET /api/schedule` - Get schedule items
+- `POST /api/schedule` - Create schedule item (admin)
+
+### Term Dates
+- `GET /api/term-dates` - List term dates
+- `POST /api/term-dates` - Create term date (admin)
+
+### Weekly Message
+- `GET /api/weekly-message/current` - Get current week's message
+- `GET /api/weekly-message` - List all weekly messages
+- `POST /api/weekly-message` - Create weekly message (admin)
+- `POST /api/weekly-message/:id/heart` - Toggle heart
+
+### Knowledge Base
+- `GET /api/knowledge` - List categories and articles
+- `POST /api/knowledge/category` - Create category (admin)
+- `POST /api/knowledge/article` - Create article (admin)
+
+### Pulse Surveys
+- `GET /api/pulse` - List pulse surveys
+- `POST /api/pulse/:id/respond` - Submit response
+- `POST /api/pulse/:id/send` - Open pulse (admin)
+- `POST /api/pulse/:id/close` - Close pulse (admin)
+
+### Users & Classes
+- `GET /api/users` - List users (admin)
+- `POST /api/users` - Create user (admin)
+- `GET /api/classes` - List classes
+- `POST /api/classes` - Create class (admin)
 
 ## Deployment
 
-Config for **both** Cloudflare styles is included — use whichever you deploy
-with. Neither requires buying a domain: a free `*.workers.dev` /
-`*.pages.dev` subdomain is provided (a custom domain can be attached later at
-no cost).
+### Backend (Railway)
+1. Create a PostgreSQL database on Railway
+2. Deploy the `server/` directory
+3. Set environment variables:
+   - `DATABASE_URL`
+   - `SESSION_SECRET`
+   - OAuth credentials (if using)
+   - `CORS_ORIGIN`
 
-### Cloudflare Workers (`*.workers.dev`)
+### Frontend (Vercel)
+1. Connect the repository to Vercel
+2. Set build directory to `client/`
+3. Set environment variable: `VITE_API_URL`
 
-`wrangler.jsonc` + `worker/index.ts` serve the built SPA and proxy `/api/*`.
+## OAuth Setup
 
-```bash
-npm run build
-npx wrangler deploy
+### Google OAuth
+1. Go to Google Cloud Console
+2. Create OAuth 2.0 credentials
+3. Add callback URL: `https://your-api.com/auth/google/callback`
+4. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
+
+### Microsoft OAuth
+1. Register app in Azure Portal
+2. Configure authentication
+3. Add callback URL: `https://your-api.com/auth/microsoft/callback`
+4. Set `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_TENANT_ID`
+
+## Hub SSO (staff)
+
+Staff sign-in for the admin app is delegated to **Wasil Hub**, the ecosystem's
+identity provider. Instead of a password/Google/Microsoft login inside Connect,
+staff click "Connect" on the Hub dashboard:
+
+```
+Hub dashboard ──▶ Hub /launch/connect ──▶ Connect API GET /auth/hub/exchange?hub_token=<JWT>
+                                                │  verifies the Hub JWT, issues Connect's
+                                                │  own session tokens
+                                                ▼
+                            admin app  /auth/callback?code=<code>  (existing OAuth handoff)
+                                                ▼
+                                        admin dashboard
 ```
 
-- SPA routing: `assets.not_found_handling: "single-page-application"`.
-- `/api/*`: proxied by `worker/index.ts` (`assets.run_worker_first: true`
-  lets the Worker run before asset fallback).
+The admin app's `/auth/callback` route is unchanged — it already knows how to
+exchange a `?code` for a session. What changed is the *entry point*: an
+unauthenticated staff member hitting the admin app is now redirected to Hub
+rather than shown Connect's own login page.
 
-### Cloudflare Pages (`*.pages.dev`)
+This is controlled by a coexistence flag so it can be rolled back without a
+redeploy of application logic:
 
-- **Build command:** `npm run build` · **Output directory:** `dist`
-- `/api/*`: proxied by the Pages Function `functions/api/[[path]].ts`.
-- SPA deep-link fallback: generated `dist/404.html` (the `postbuild` step —
-  avoids Cloudflare's `_redirects` "infinite loop" validation); the service
-  worker then serves `index.html` (200) on refresh.
-- `public/_headers`: caching + security headers.
+| Var | Where | Meaning |
+| --- | --- | --- |
+| `VITE_STAFF_AUTH_MODE` | `apps/admin/.env` | `hub` (default) redirects unauthenticated staff to Hub. `legacy` restores Connect's own login page — the rollback path. |
+| `VITE_HUB_LAUNCH_URL` | `apps/admin/.env` | Where staff are sent to sign in (default `https://hub.wasil.app/launch/connect`). |
+| `HUB_URL` / `HUB_ISSUER` / `HUB_AUDIENCE` / `HUB_JWKS_URL` | `server/.env` | Used by the API to verify Hub-issued JWTs at `GET /auth/hub/exchange` and mint Connect's own tokens. See `HUB-INTEGRATION.md` for the full server-side design. |
 
-## Adding a feature
+The legacy password/Google/Microsoft login page (`apps/admin/src/pages/LoginPage.tsx`)
+is kept in the codebase but only rendered when `VITE_STAFF_AUTH_MODE=legacy` —
+it is not deleted, just unrouted, so it stays available for emergency rollback.
 
-See `src/features/README.md` for the feature-module conventions. New
-recommendation surfaces should consume `usePredictions()` /
-`usePreferenceService()` rather than re-deriving values.
+Parents are unaffected — they continue to use Connect's existing
+invitation/magic-link flow; Hub SSO in this stage covers staff only.
+
+## Features
+
+- **Messages**: Announcements with action items (consent, payment, RSVP)
+- **Quick Surveys**: Poll parents with instant results
+- **Events Calendar**: School events with RSVP tracking
+- **Schedule**: Daily and recurring schedule items
+- **Term Dates**: Academic calendar
+- **Weekly Message**: Principal's weekly update with hearts
+- **Knowledge Base**: School policies and information
+- **Pulse Surveys**: Half-termly parent satisfaction surveys
+- **White-label**: Customizable branding per school
+
+## License
+
+MIT
